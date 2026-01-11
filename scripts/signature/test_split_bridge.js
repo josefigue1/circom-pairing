@@ -23,13 +23,22 @@ const BUILD_PART1 = path.join(BUILD_BASE, 'part1');
 const BUILD_PART2 = path.join(BUILD_BASE, 'part2');
 const BUILD_PART3 = path.join(BUILD_BASE, 'part3');
 
-// Public signal indices (from plan)
+// Public signal counts and indices
+// Part1: outputs Hm[2][2][7]=28, public inputs pubkey[2][7]=14 + signature[2][2][7]=28 + hash[2][2][7]=28 = 70
+// Part2: outputs miller_out[6][2][7]=84, public inputs pubkey=14 + signature=28 + Hm=28 = 70
+// Part3: no outputs, public inputs miller_out=84
+
+const PART1_PUBLIC_COUNT = 28 + 70; // 98 total public signals
 const PART1_HM_START = 0;
-const PART1_HM_LENGTH = 28; // Hm[2][2][7] = 2*2*7 = 28
+const PART1_HM_LENGTH = 28; // Hm is output, comes first
+
+const PART2_PUBLIC_COUNT = 84 + 70; // 154 total public signals
 const PART2_MILLER_START = 0;
-const PART2_MILLER_LENGTH = 84; // miller_out[6][2][7] = 6*2*7 = 84
-const PART2_HM_START = 126; // Hm starts at index 126 in Part2
+const PART2_MILLER_LENGTH = 84; // miller_out is output, comes first
+const PART2_HM_START = 84 + 14 + 28; // After miller_out(84) + pubkey(14) + signature(28) = 126
 const PART2_HM_LENGTH = 28;
+
+const PART3_PUBLIC_COUNT = 84; // Only miller_out as public input
 
 function ensureDir(dir) {
     if (!fs.existsSync(dir)) {
@@ -50,15 +59,21 @@ function extractPublicSignals(publicJson) {
 }
 
 function extractHmFromPart1(publicSignals) {
-    // Part1 public signals order: [Hm, pubkey, signature, hash]
-    // Hm is at indices 0-27
+    // Part1 public signals order: [Hm (output), pubkey, signature, hash]
+    // Hm is output at indices 0-27
     return publicSignals.slice(PART1_HM_START, PART1_HM_START + PART1_HM_LENGTH);
 }
 
 function extractMillerOutFromPart2(publicSignals) {
-    // Part2 public signals order: [miller_out, pubkey, signature, Hm]
-    // miller_out is at indices 0-83
+    // Part2 public signals order: [miller_out (output), pubkey, signature, Hm]
+    // miller_out is output at indices 0-83
     return publicSignals.slice(PART2_MILLER_START, PART2_MILLER_START + PART2_MILLER_LENGTH);
+}
+
+function extractHmFromPart2(publicSignals) {
+    // Part2 public signals order: [miller_out (output), pubkey, signature, Hm]
+    // Hm is public input at indices 126-153
+    return publicSignals.slice(PART2_HM_START, PART2_HM_START + PART2_HM_LENGTH);
 }
 
 function createInputPart2(originalInput, hm) {
@@ -183,15 +198,16 @@ async function main() {
         process.exit(1);
     }
     
-    runCommand(`node signature_part1_js/generate_witness.js signature_part1.wasm input_part1.json witness.wtns`, BUILD_PART1);
+    runCommand(`node signature_part1_js/generate_witness.js signature_part1_js/signature_part1.wasm input_part1.json witness.wtns`, BUILD_PART1);
     
     // Convert witness to JSON and extract public signals
     runCommand(`snarkjs wtns export json witness.wtns witness.json`, BUILD_PART1);
     
     const witness1 = readJson(path.join(BUILD_PART1, 'witness.json'));
-    const publicSignals1 = witness1.slice(1); // First element is always 1
+    // Extract only public signals: witness[0]=1, then outputs, then public inputs
+    const publicSignals1 = witness1.slice(1, 1 + PART1_PUBLIC_COUNT);
     
-    console.log(`Part1 public signals count: ${publicSignals1.length} (expected: 98)`);
+    console.log(`Part1 public signals count: ${publicSignals1.length} (expected: ${PART1_PUBLIC_COUNT})`);
     
     const hm = extractHmFromPart1(publicSignals1);
     console.log(`Extracted Hm: ${hm.length} elements`);
@@ -225,20 +241,21 @@ async function main() {
         process.exit(1);
     }
     
-    runCommand(`node signature_part2_js/generate_witness.js signature_part2.wasm input_part2.json witness.wtns`, BUILD_PART2);
+    runCommand(`node signature_part2_js/generate_witness.js signature_part2_js/signature_part2.wasm input_part2.json witness.wtns`, BUILD_PART2);
     
     runCommand(`snarkjs wtns export json witness.wtns witness.json`, BUILD_PART2);
     
     const witness2 = readJson(path.join(BUILD_PART2, 'witness.json'));
-    const publicSignals2 = witness2.slice(1);
+    // Extract only public signals
+    const publicSignals2 = witness2.slice(1, 1 + PART2_PUBLIC_COUNT);
     
-    console.log(`Part2 public signals count: ${publicSignals2.length} (expected: 154)`);
+    console.log(`Part2 public signals count: ${publicSignals2.length} (expected: ${PART2_PUBLIC_COUNT})`);
     
     const millerOut = extractMillerOutFromPart2(publicSignals2);
     console.log(`Extracted miller_out: ${millerOut.length} elements`);
     
-    // Verify Hm chain: Part1[0:28] == Part2[126:154]
-    const hmPart2 = publicSignals2.slice(PART2_HM_START, PART2_HM_START + PART2_HM_LENGTH);
+    // Verify Hm chain: Part1 output Hm[0:28] == Part2 input Hm[126:154]
+    const hmPart2 = extractHmFromPart2(publicSignals2);
     const hmMatch = JSON.stringify(hm) === JSON.stringify(hmPart2);
     console.log(`Hm chain verification: ${hmMatch ? '✓ PASS' : '✗ FAIL'}`);
     if (!hmMatch) {
@@ -270,14 +287,15 @@ async function main() {
         process.exit(1);
     }
     
-    runCommand(`node signature_part3_js/generate_witness.js signature_part3.wasm input_part3.json witness.wtns`, BUILD_PART3);
+    runCommand(`node signature_part3_js/generate_witness.js signature_part3_js/signature_part3.wasm input_part3.json witness.wtns`, BUILD_PART3);
     
     runCommand(`snarkjs wtns export json witness.wtns witness.json`, BUILD_PART3);
     
     const witness3 = readJson(path.join(BUILD_PART3, 'witness.json'));
-    const publicSignals3 = witness3.slice(1);
+    // Extract only public signals
+    const publicSignals3 = witness3.slice(1, 1 + PART3_PUBLIC_COUNT);
     
-    console.log(`Part3 public signals count: ${publicSignals3.length} (expected: 84)`);
+    console.log(`Part3 public signals count: ${publicSignals3.length} (expected: ${PART3_PUBLIC_COUNT})`);
     
     // Verify miller_out chain: Part2[0:84] == Part3[0:84]
     const millerMatch = JSON.stringify(millerOut) === JSON.stringify(publicSignals3);

@@ -6,14 +6,14 @@ include "bls12_381_func.circom";
 include "bls12_381_hash_to_G2.circom";
 
 // Part 1: Checks + MapToG2
-// Inputs: pubkey, signature, hash, Hm (public output to be chained)
+// Inputs: pubkey, signature, hash
+// Output: Hm (public output to be chained to Part2)
 // Verifica: range checks, subgroup checks, y calcula Hm = MapToG2(hash) con Hm != infinity
-// Constriñe: Hm calculado == Hm input (para que Hm aparezca en public signals)
 template CoreVerifyPart1(n, k){
     signal input pubkey[2][k];
     signal input signature[2][2][k];
     signal input hash[2][2][k];
-    signal input Hm[2][2][k];
+    signal output Hm[2][2][k];
      
     var q[50] = get_BLS12_381_prime(n, k);
 
@@ -66,20 +66,20 @@ template CoreVerifyPart1(n, k){
 
     Hm_component.isInfinity === 0;
     
-    // Constrain: calculated Hm must equal input Hm (so Hm appears in public signals)
+    // Assign calculated Hm to output signal
     for(var i=0; i<2; i++)for(var j=0; j<2; j++)for(var idx=0; idx<k; idx++)
-        Hm[i][j][idx] === Hm_component.out[i][j][idx];
+        Hm[i][j][idx] <== Hm_component.out[i][j][idx];
 }
 
 // Part 2: MillerLoopFp2Two
-// Inputs: pubkey, signature, Hm, miller_out (public output to be chained)
+// Inputs: pubkey, signature, Hm
+// Output: miller_out (public output to be chained to Part3)
 // Calcula: MillerLoopFp2Two con negación de signature
-// Constriñe: miller_out calculado == miller_out input (para que miller_out aparezca en public signals)
 template CoreVerifyPart2(n, k){
     signal input pubkey[2][k];
     signal input signature[2][2][k];
     signal input Hm[2][2][k];
-    signal input miller_out[6][2][k];
+    signal output miller_out[6][2][k];
 
     var q[50] = get_BLS12_381_prime(n, k);
     var x = get_BLS12_381_parameter();
@@ -107,9 +107,9 @@ template CoreVerifyPart2(n, k){
         miller.Q[1][i][idx] <== pubkey[i][idx];
     }
 
-    // Constrain: calculated miller_out must equal input miller_out (so miller_out appears in public signals)
+    // Assign calculated miller_out to output signal
     for(var i=0; i<6; i++)for(var j=0; j<2; j++)for(var idx=0; idx<k; idx++)
-        miller_out[i][j][idx] === miller.out[i][j][idx];
+        miller_out[i][j][idx] <== miller.out[i][j][idx];
 }
 
 // Part 3: FinalExponentiate + Check == 1
